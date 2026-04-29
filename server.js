@@ -10,6 +10,21 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 
+// Minimal request logger (no payload logging, safe for production)
+app.use((req, res, next) => {
+  const start = Date.now();
+  const requestId = Math.random().toString(36).slice(2, 8);
+
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    console.log(
+      `[${requestId}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`
+    );
+  });
+
+  next();
+});
+
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
