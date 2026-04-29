@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: aiselfie-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_API_TOKEN
+        sync: false
