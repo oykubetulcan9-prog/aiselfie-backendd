@@ -6,11 +6,32 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
+/**
+ * Geçerli app token'ları:
+ * - APP_API_TOKENS: virgülle ayrılmış liste (çoklu uygulama)
+ * - veya APP_API_TOKEN: tek token (geriye dönük uyumluluk)
+ */
+function parseAllowedTokens() {
+  const multi = process.env.APP_API_TOKENS;
+  if (multi && multi.trim() !== '') {
+    const parts = multi
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    return new Set(parts);
+  }
+  const single = process.env.APP_API_TOKEN;
+  if (single && single.trim() !== '') {
+    return new Set([single.trim()]);
+  }
+  return new Set();
+}
+
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 
-// Minimal request logger (no payload logging, safe for production)
 app.use((req, res, next) => {
   const start = Date.now();
   const requestId = Math.random().toString(36).slice(2, 8);
@@ -21,7 +42,6 @@ app.use((req, res, next) => {
       `[${requestId}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`
     );
   });
-
   next();
 });
 
@@ -30,21 +50,29 @@ const limiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const token = req.header('x-app-token');
+    if (token) return `token:${token}`;
+    return req.ip || 'unknown';
+  },
 });
 app.use(limiter);
 
 const geminiKey = process.env.GEMINI_API_KEY;
-const appApiToken = process.env.APP_API_TOKEN;
+const allowedTokens = parseAllowedTokens();
 
 if (!geminiKey) {
   console.error('Missing GEMINI_API_KEY in environment.');
   process.exit(1);
 }
-
-if (!appApiToken) {
-  console.error('Missing APP_API_TOKEN in environment.');
+if (allowedTokens.size === 0) {
+  console.error(
+    'Missing app tokens. Set APP_API_TOKENS (comma-separated) or APP_API_TOKEN.'
+  );
   process.exit(1);
 }
+
+console.log(`Allowed app tokens: ${allowedTokens.size}`);
 
 const genAI = new GoogleGenerativeAI(geminiKey);
 
@@ -55,7 +83,7 @@ app.get('/health', (_, res) => {
 app.post('/generate-selfie', async (req, res) => {
   try {
     const token = req.header('x-app-token');
-    if (token !== appApiToken) {
+    if (!token || !allowedTokens.has(token)) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -66,12 +94,7 @@ app.post('/generate-selfie', async (req, res) => {
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
     const imageResult = await model.generateContent([
-      {
-        inlineData: {
-          data: base64Image,
-          mimeType: mimeType || 'image/jpeg',
-        },
-      },
+      { inlineData: { data: base64Image, mimeType: mimeType || 'image/jpeg' } },
       { text: prompt },
     ]);
 
@@ -91,21 +114,13 @@ app.post('/generate-selfie', async (req, res) => {
     }
 
     if (!imageBase64) {
-      return res.status(502).json({
-        error: 'Gemini did not return an image',
-        textResponse,
-      });
+      return res.status(502).json({ error: 'Gemini did not return an image', textResponse });
     }
 
-    return res.json({
-      imageBase64,
-      textResponse,
-    });
+    return res.json({ imageBase64, textResponse });
   } catch (error) {
     console.error('generate-selfie error:', error);
-    return res.status(500).json({
-      error: error?.message || 'Internal server error',
-    });
+    return res.status(500).json({ error: error?.message || 'Internal server error' });
   }
 });
 
