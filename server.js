@@ -88,8 +88,21 @@ app.post('/generate-selfie', async (req, res) => {
     }
 
     const { base64Image, mimeType, prompt } = req.body;
-    if (!base64Image || !prompt) {
-      return res.status(400).json({ error: 'Missing base64Image or prompt' });
+    if (!prompt) {
+      return res.status(400).json({ error: 'Missing prompt' });
+    }
+
+    // Text-only mode (AI Stylist chat — prompt only, no image)
+    if (!base64Image) {
+      const textModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const textResult = await textModel.generateContent([{ text: prompt }]);
+      const textResponse = textResult.response.text();
+
+      if (!textResponse) {
+        return res.status(502).json({ error: 'Gemini did not return text' });
+      }
+
+      return res.json({ textResponse });
     }
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
